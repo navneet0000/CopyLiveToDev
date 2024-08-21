@@ -1,0 +1,152 @@
+const axios = require('axios');
+const DigestFetch = require('digest-fetch');
+const { MongoClient } = require('mongodb');
+require('dotenv').config();
+
+// Replace with your MongoDB Atlas credentials and identifiers
+const atlasConfig = {
+    apiBaseUrl: 'https://cloud.mongodb.com/api/atlas/v2',
+    publicKey: 'oghtoana',      // Atlas Public API Key
+    privateKey: '2b5befa8-0e9d-4f48-bc62-5b2a30f62a69',    // Atlas Private API Key
+    groupId: '65964c0d2650e91c84c53b02',      // Atlas Project ID/groupId
+    clusterName: 'SalesHive-Prod-Cluster',   // Live Cluster Name
+    liveDbName: 'SalesHive_Live',          // Live DB Name
+    devDbName: 'SalesHive_Dev',          // Live DB Name
+};
+
+const liveUri = process.env.LIVE_DB_URL;
+const devUri = process.env.DEV_DB_URL;
+
+async function getAllCollections() {
+    const liveClient = new MongoClient(liveUri);
+    try {
+        await liveClient.connect();
+
+        const liveDb = liveClient.db('SalesHive_Live');
+        const collections = await liveDb.listCollections().toArray();
+
+        return collections.map(col => col.name);
+
+    } catch (err) {
+        console.error('Error copying and updating indexes:', err);
+        return [];
+    } finally {
+        await liveClient.close();
+    }
+}
+
+
+async function fetchSearchIndexes(collectionName) {
+    const digest = new DigestFetch(atlasConfig.publicKey, atlasConfig.privateKey);
+
+    try {
+        const url = `${atlasConfig.apiBaseUrl}/groups/${atlasConfig.groupId}/clusters/${atlasConfig.clusterName}/search/indexes/${atlasConfig.liveDbName}/${collectionName}`;
+        const response = await digest.fetch(url, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/vnd.atlas.2024-05-30+json',
+            }
+        });
+
+        if (response.ok) {
+            return await response.json();
+        } else {
+            console.error(`Failed to fetch search indexes for collection ${collectionName}: ${response.statusText}`);
+            return [];
+        }
+    } catch (error) {
+        console.error(`Error fetching search indexes for collection ${collectionName}:`, error.message);
+        return [];
+    }
+}
+
+async function deleteSearchIndexes(collectionName, indexes) {
+    const digest = new DigestFetch(atlasConfig.publicKey, atlasConfig.privateKey);
+
+    try {
+        for (const index of indexes) {
+            const name = index.name;
+            const url = `${atlasConfig.apiBaseUrl}/groups/${atlasConfig.groupId}/clusters/${atlasConfig.clusterName}/search/indexes/${atlasConfig.devDbName}/${collectionName}/${name}`;
+            const response = await digest.fetch(url, {
+                method: 'DELETE',
+                headers: {
+                    'Accept': 'application/vnd.atlas.2024-05-30+json',
+                }
+            });
+
+            if (response.ok) {
+                console.log(`Deleted all search indexes for collection ${collectionName}`);
+            } else {
+                console.error(`Failed to delete search indexes for collection ${collectionName}: ${response.statusText}`);
+            }
+        }
+    } catch (error) {
+        console.error(`Error deleting search indexes for collection ${collectionName}:`, error.message);
+    }
+}
+
+async function addSearchIndexes(collectionName, indexes) {
+    const digest = new DigestFetch(atlasConfig.publicKey, atlasConfig.privateKey);
+
+    try {
+        for (const index of indexes) {
+            const indexToPost = { ...index };
+            delete indexToPost.indexID;
+            delete indexToPost.queryable;
+            delete indexToPost.statusDetail;
+            delete indexToPost.status;
+            delete indexToPost.latestDefinitionVersion;
+            indexToPost.database = atlasConfig.devDbName;
+            indexToPost.type = "search";
+            indexToPost.definition = indexToPost.latestDefinition;
+            delete indexToPost.latestDefinition;
+
+            const url = `${atlasConfig.apiBaseUrl}/groups/${atlasConfig.groupId}/clusters/${atlasConfig.clusterName}/search/indexes`;
+
+            const response = await digest.fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/vnd.atlas.2024-05-30+json',
+                },
+                body: JSON.stringify(indexToPost) // Post the index definition
+            });
+
+            if (response.ok) {
+                console.log(`Successfully added index for collection ${collectionName}`);
+            } else {
+                console.error(`Failed to add index for collection ${collectionName}: ${response.statusText}`);
+            }
+        }
+    } catch (error) {
+        console.error(`Error adding search indexes for collection ${collectionName}:`, error.message);
+    }
+}
+
+async function updateSearchIndexes() {
+
+    try {
+        const collections = await getAllCollections(); // Get all collections in the live DB
+
+        for (const collection of collections) {
+            if (collection.startsWith('temp') || collection.startsWith('system')) {
+                // console.log(`Skipping collection: ${collection}`);
+                continue;
+            }
+            const indexes = await fetchSearchIndexes(collection);
+            if (indexes.length > 0) {
+                // await deleteSearchIndexes(collection, indexes);
+                await addSearchIndexes(collection, indexes);
+            }
+        }
+
+        console.log('Search indexes exported successfully:');
+
+    } catch (error) {
+        console.error('Error exporting search indexes:', error.response ? error.response.data : error.message);
+        return null;
+    }
+}
+
+// Run the update function
+updateSearchIndexes();

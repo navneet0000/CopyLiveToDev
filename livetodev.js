@@ -2,7 +2,6 @@ const mongoose = require('mongoose');
 const { MongoClient } = require('mongodb');
 require('dotenv').config();
 
-// Replace with your actual MongoDB connection strings
 const liveDBUrl = process.env.LIVE_DB_URL;
 const devDBUrl = process.env.DEV_DB_URL;
 
@@ -28,14 +27,14 @@ async function copyCollectionsWithClientID(clientIDs) {
             const collectionName = collectionInfo.name;
 
             // Skip collections that start with "temp"
-            if (collectionName.startsWith('temp')) {
+            if (collectionName.startsWith('temp') || collectionName.startsWith('system') || collectionName === "campaignstephistories" || collectionName === "prospects" || collectionName === "prospectcampaigns") {
                 console.log(`Skipping collection: ${collectionName}`);
                 continue;
             }
             console.log(`\n===============Processing ${collectionName}================`);
 
             // if (collectionName === "testcopy") {
-            
+
             // Access the collection dynamically
             const liveCollection = liveConnection.collection(collectionName);
 
@@ -75,13 +74,14 @@ async function copyCollectionsWithClientID(clientIDs) {
 
                     // Insert data into the corresponding Dev database collection
                     // await devCollection.insertMany(documents);
-                    console.log(`${documents.length} documents copied from ${collectionName}.`);
+                    // console.log(`${documents.length} documents copied from ${collectionName}.`);
                 } else {
                     console.log(`No documents found in ${collectionName}.`);
                 }
                 // }
 
                 skip += batchSize;
+                console.log(`documents : ${skip}`);
             }
             console.log(`===============END Processing================ \n`);
         }
